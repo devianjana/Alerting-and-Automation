@@ -1,0 +1,86 @@
+!pip install twilio sendgrid scikit-learn numpy
+
+
+import numpy as np
+import time
+from sklearn.linear_model import LinearRegression
+from twilio.rest import Client
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
+
+# --- CONFIGURATION (Paste your Twilio/SendGrid details here) ---
+TWILIO_SID = 'AC8ad2f6076aba2212a51111117e10bfb9'
+TWILIO_TOKEN = 'e9e6dfb7d2b56505425fed5f63ae11b2'
+TWILIO_PHONE = '+18025233520'       # Your Twilio Number
+MY_PHONE = '+918075779934'          # Your personal phone (for SMS/WhatsApp)
+MY_EMAIL = 'devianjanaanoop9a@gmail.com'  # Your personal email
+SG_API_KEY = 'SG.YOUR_SENDGRID_KEY'
+FROM_EMAIL = 'alerts@yourdomain.com'
+
+# --- 1. THE ALERT ENGINE (ML + RULES) ---
+class AlertEngine:
+    def __init__(self, threshold=80.0):
+        self.threshold = threshold
+        self.history = []
+
+    def predict_overload(self):
+        """Simple ML: Predicts next value based on linear trend."""
+        if len(self.history) < 5: return False
+        X = np.array(range(len(self.history))).reshape(-1, 1)
+        y = np.array(self.history)
+        model = LinearRegression().fit(X, y)
+        prediction = model.predict([[len(self.history)]])[0]
+        return prediction > self.threshold
+
+    def check_rules(self, current_load):
+        return current_load >= self.threshold
+
+# --- 2. THE TWILIO NOTIFIER ---
+class TwilioNotifier:
+    def __init__(self):
+        self.client = Client(TWILIO_SID, TWILIO_TOKEN)
+        self.sg_client = SendGridAPIClient(SG_API_KEY)
+
+    def broadcast_alert(self, message):
+        print(f"🚀 Dispatching Alerts: {message}")
+        
+        # 1. SMS
+        try:
+            self.client.messages.create(body=message, from_=TWILIO_PHONE, to=MY_PHONE)
+            print("✅ SMS Sent")
+        except Exception as e: print(f"❌ SMS Failed: {e}")
+
+        # 2. WhatsApp (Requires sandbox 'join' first)
+        try:
+            self.client.messages.create(from_=f"whatsapp:{TWILIO_PHONE}", body=message, to=f"whatsapp:{MY_PHONE}")
+            print("✅ WhatsApp Sent")
+        except Exception as e: print(f"❌ WhatsApp Failed: {e}")
+
+        # 3. Email
+        try:
+            mail = Mail(from_email=FROM_EMAIL, to_emails=MY_EMAIL, subject="SYSTEM ALERT", plain_text_content=message)
+            self.sg_client.send(mail)
+            print("✅ Email Sent")
+        except Exception as e: print(f"❌ Email Failed: {e}")
+
+# --- 3. EXECUTION LOOP ---
+engine = AlertEngine(threshold=85.0)
+notifier = TwilioNotifier()
+
+# Simulated system load data (Normal -> Spike -> Predicted Overload)
+simulated_stream = [60, 62, 65, 70, 75, 82, 88, 92]
+
+print("--- Starting Polish Alerting & Automation Engine ---")
+for current_load in simulated_stream:
+    print(f"\nMonitoring... Current Load: {current_load}%")
+    engine.history.append(current_load)
+    
+    # Check Rules (Point 2)
+    if engine.check_rules(current_load):
+        notifier.broadcast_alert(f"CRITICAL: Load is at {current_load}%. Immediate action required!")
+    
+    # Check ML Prediction (Point 1)
+    elif engine.predict_overload():
+        notifier.broadcast_alert(f"WARNING: ML Engine predicts an overload. Trend suggests > {engine.threshold}% soon.")
+    
+    time.sleep(2) # Delay for Colab readability
